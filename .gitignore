@@ -1,0 +1,29 @@
+# Node build artifacts
+node_modules
+npm-debug.log
+
+# Local development
+*.env
+*.dev
+.DS_Store
+
+*compile_commands.json*
+*.cache
+
+# Vagrant
+*.vagrant
+
+# Docker
+docker-compose.yml
+
+# Python optimization files
+__pycache__/
+
+.next/
+
+.vscode/targets.log
+.vscode/configurationCache.log
+.vscode/dryrun.log
+
+target/
+
