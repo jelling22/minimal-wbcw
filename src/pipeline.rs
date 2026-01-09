@@ -1,7 +1,7 @@
 use std::env;
 
 use color_eyre::eyre::{Ok, Report, Result};
-use gst::{DebugGraphDetails, prelude::*};
+use gst::{DebugGraphDetails, EventType, PadProbeType, prelude::*};
 
 #[derive(Debug, Default)]
 pub struct DebugSettings {
@@ -22,6 +22,18 @@ pub enum BusCommandType {
     Error,
 }
 
+pub fn attach_eos_probe<P: IsA<gst::Pad>>(pad: &P, msg: &str) {
+    let mmsg = msg.to_owned();
+    pad.add_probe(PadProbeType::EVENT_BOTH, move |_pad, pad_probe_info| {
+    if let Some(event) = pad_probe_info.event() {
+        if let EventType::Eos = event.type_() {
+            println!("{}", mmsg);
+        }
+    }
+    gst::PadProbeReturn::Ok
+    });
+}
+
 impl PipelineWrapper {
     pub fn new() -> Result<Self, Report> {
         let debug_params = DebugSettings {
@@ -36,10 +48,11 @@ impl PipelineWrapper {
 
         //cef src
         let cef_src = gst::ElementFactory::make("cefsrc")
-            .property_from_str("url", "https://jelling22.github.io/js-signals-test-page/")
-            .property("listen-for-js-signals", true)
+            .property_from_str("url", "http://example.com")
             .property_from_str("do-timestamp", "1")
+            .property_from_str("num-buffers", "300")
             .build()?;
+        attach_eos_probe(&cef_src.static_pad("src").unwrap(), "! cef emitted eos after 300 buffers");
         //cef -> demux
         let cef_demux = gst::ElementFactory::make("cefdemux").build()?;
         pipeline.pipeline.add_many([&cef_src, &cef_demux])?;
@@ -152,17 +165,17 @@ impl PipelineWrapper {
 
 
         //HACKY FIX
-        let mixer_src_pad = audio_mixer.static_pad("src").unwrap();
-        mixer_cef_sink_pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_pad, info| {
-            // if cef sink pad sees EOS, push EOS to src pad to bypass running silence source
-            if let Some(gst::PadProbeData::Event(event)) = &info.data {
-                if let gst::EventView::Eos(_) = event.view() {
-                    let _ = mixer_src_pad.push_event(gst::event::Eos::new());
-                    return gst::PadProbeReturn::Ok;
-                }
-            }
-            gst::PadProbeReturn::Ok
-        });
+        // let mixer_src_pad = audio_mixer.static_pad("src").unwrap();
+        // mixer_cef_sink_pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_pad, info| {
+        //     // if cef sink pad sees EOS, push EOS to src pad to bypass running silence source
+        //     if let Some(gst::PadProbeData::Event(event)) = &info.data {
+        //         if let gst::EventView::Eos(_) = event.view() {
+        //             let _ = mixer_src_pad.push_event(gst::event::Eos::new());
+        //             return gst::PadProbeReturn::Ok;
+        //         }
+        //     }
+        //     gst::PadProbeReturn::Ok
+        // });
         //HACKY FIX
 
         //make audio encode
@@ -189,7 +202,7 @@ impl PipelineWrapper {
         encode_audio_src_pad.link(&mux_audio_sink_pad)?;
 
         //make filesink
-        let sink = gst::ElementFactory::make("filesink").property("location", "test-cef-file.mp4").build()?;
+        let sink = gst::ElementFactory::make("filesink").property("location", "pipeline-test.mp4").build()?;
         pipeline.pipeline.add(&sink)?;
         mux.link(&sink)?;
 

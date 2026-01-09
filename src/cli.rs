@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use color_eyre::eyre::{Report, Result};
-use tokio::signal;
+use tokio::{signal, task::JoinHandle};
 use tokio::sync::RwLock;
 
 mod pipeline;
@@ -15,28 +15,35 @@ async fn main() -> Result<(), Report> {
     pipeline.write().await.play()?;
     let pipeline_copy = pipeline.clone();
 
+    let mut watch_eos: JoinHandle<Result<(), Report>> = tokio::spawn(
+        async move {
+            loop {
+                let msg = pipeline.write().await.handle_pipeline_message();
+                if let Some(cmd) = msg {
+                    if cmd == BusCommandType::Eos {
+                        println!("State changed to NULL. Pipeline finsished.");
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Ok(())
+        }
+    );
+
     tokio::select! {
+        result = &mut watch_eos => {
+            match result {
+                Ok(_) => println!("Pipeline finished naturally."),
+                Err(e) => println!("Bus panicked: {:?}", e)
+            }
+        }
         _ = signal::ctrl_c() => {
             println!("saw ctrl-c");
             pipeline_copy.write().await.stop()?;
+            let _ = watch_eos.await;
+            println!("Pipeline shut down manually.");
         }
-        _ = tokio::spawn(
-                async move {
-                    loop {
-                        let mut pipeline_terminated = false;
-                        while let Some(cmd) = pipeline.write().await.handle_pipeline_message() {
-                            if cmd == BusCommandType::Eos {
-                                pipeline_terminated = true;
-                                break;
-                            }
-                        }
-
-                        if pipeline_terminated {
-                            break;
-                        }
-                    }
-                }
-            ) => {}
     };
 
     Ok(())
